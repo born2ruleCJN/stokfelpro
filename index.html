@@ -2531,6 +2531,7 @@ function submitUpgrade() {
 }
 
 // ════ AUTH ════
+// ════ AUTH ════
 async function doLogin() {
   const u = v('lu'), p = v('lp');
   if (!u || !p) { toast('Enter username and password','err'); return; }
@@ -2538,40 +2539,60 @@ async function doLogin() {
   const btn = document.querySelector('#loginScreen .btn-gold') || document.querySelector('[onclick="doLogin()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
 
+  showLoadingOverlay('Signing in...');
+
   try {
-    // Look up email by username in Firestore
-    showLoadingOverlay('Signing in...');
-    if (!fbDb) {
-      const demo = db.members.find(x => x.username===u && x.password===p);
-      if (demo) { me=demo; hideLoadingOverlay(); initApp(); return; }
-      hideLoadingOverlay(); toast('Invalid username or password','err'); if(btn){btn.disabled=false;btn.textContent='Sign In';} return;
-    }
-    const snap = await fbDb.collection('members').where('username','==',u).limit(1).get();
-    if (snap.empty) {
-      // Fallback: try demo data
-      const demo = db.members.find(x => x.username===u && x.password===p);
-      if (demo) { me = demo; await sbLoadAll(); initApp(); hideLoadingOverlay(); return; }
+    // ALWAYS check Supabase first
+    if (sbClient) {
+      // Query Supabase with case-insensitive username
+      const {data: rows, error} = await sbClient
+        .from('members')
+        .select('*')
+        .ilike('username', u)  // Case-insensitive search
+        .limit(1);
+      
+      if (error) throw error;
+      
+      if (rows && rows.length > 0) {
+        const member = rowToMember(rows[0]);
+        
+        // Check password
+        if (member.password === p) {
+          hideLoadingOverlay();
+          me = member;
+          await sbLoadAll();  // Load all data from Supabase
+          initApp();
+          return;
+        } else {
+          hideLoadingOverlay();
+          toast('Incorrect password', 'err');
+          if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+          return;
+        }
+      } else {
+        hideLoadingOverlay();
+        toast('Username not found', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+        return;
+      }
+    } else {
+      // Fallback only if Supabase is not connected
+      const demo = db.members.find(m => m.username.toLowerCase() === u.toLowerCase() && m.password === p);
+      if (demo) {
+        me = demo;
+        hideLoadingOverlay();
+        initApp();
+        return;
+      }
       hideLoadingOverlay();
-      toast('Username not found','err');
+      toast('Not connected to server - try again', 'err');
       if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
       return;
     }
-    const memberData = { id: snap.docs[0].id, ...snap.docs[0].data() };
-    // Sign in with Firebase Auth using stored email
-    const email = memberData.email || (u + '@stokvelpro.app');
-    await fbAuth.signInWithEmailAndPassword(email, p);
-    // onAuthStateChanged will handle the rest
   } catch(e) {
     hideLoadingOverlay();
-    // If Firebase Auth fails, try demo data fallback
-    const demo = db.members.find(x => x.username===u && x.password===p);
-    if (demo) {
-      me = demo;
-      await sbLoadAll();
-      initApp();
-    } else {
-      toast('Invalid username or password','err');
-    }
+    console.error('Login error:', e);
+    toast('Login error: ' + e.message, 'err');
     if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
   }
 }
