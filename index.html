@@ -1878,29 +1878,7 @@ function ledgerToRow(e) {
 }
 
 // ── AUTH ──
-async function sbLogin(username, password) {
-  if (!sbClient) {
-    const demo = db.members.find(m => m.username.toLowerCase()===username.toLowerCase() && m.password===password);
-    return demo ? {success:true,member:demo} : {success:false,error:'Invalid username or password'};
-  }
-  try {
-    // Make the query case-insensitive by using .ilike instead of .eq
-    const {data:rows, error} = await sbClient.from('members').select('*').ilike('username', username).limit(1);
-    if (error) throw error;
-    if (!rows || rows.length === 0) {
-      // Fallback to demo data
-      const demo = db.members.find(m => m.username.toLowerCase()===username.toLowerCase() && m.password===password);
-      return demo ? {success:true,member:demo} : {success:false,error:'Username not found'};
-    }
-    const member = rowToMember(rows[0]);
-    if (member.password === password) return {success:true, member};
-    return {success:false, error:'Incorrect password'};
-  } catch(e) {
-    console.warn('sbLogin error:', e.message);
-    const demo = db.members.find(m => m.username.toLowerCase()===username.toLowerCase() && m.password===password);
-    return demo ? {success:true,member:demo} : {success:false,error:'Login error — try again'};
-  }
-}
+
 
 async function sbLogout() {
   if (sbClient) try { await sbClient.auth.signOut(); } catch(e) {}
