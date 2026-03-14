@@ -5638,6 +5638,10 @@
             <h2 id="dash-greet">Good day 👋</h2>
             <p>Your StokfelPro overview</p>
           </div>
+
+          <!-- TOP UPGRADE BUTTON - Always visible at top -->
+          <div id="top-upgrade-box" style="margin-bottom:1.2rem"></div>
+
           <div class="stats-grid">
             <div class="stat g">
               <div class="stat-lbl">Total Earned</div>
@@ -5660,9 +5664,6 @@
               <div class="stat-sub">Level 4 · 81 members</div>
             </div>
           </div>
-
-          <!-- TOP UPGRADE BUTTON -->
-          <div id="top-upgrade-box" style="margin-bottom:1.2rem"></div>
 
           <!-- EARNINGS ARC WIDGET -->
           <div id="dash-arc-row"
@@ -7152,7 +7153,7 @@
         const slotsFilled = recs.length;
         const slotsNeeded = SLOTS - slotsFilled;
 
-        if (u.level < MAX_LEVEL && !u.upgPending) {
+        if (u.level < MAX_LEVEL) {
           if (isEligible) {
             // Eligible - show prominent upgrade button
             topUpgBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(201,168,76,.15),rgba(34,197,94,.1));border:2px solid var(--gold);border-radius:16px;padding:1.25rem;text-align:center;box-shadow:0 4px 20px rgba(201,168,76,.25)">
@@ -7160,15 +7161,13 @@
               <button class="btn btn-gold" style="font-size:1.1rem;padding:.75rem 2rem;width:100%;font-weight:700" onclick="confirmUpgrade()">🚀 Upgrade to Level ${nextLvl} Now</button>
               <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Click to proceed to payment →</div>
             </div>`;
-          } else if (!u.upgradeDone) {
+          } else {
             // Not eligible - show disabled button
-            topUpgBox.innerHTML = `<div style="background:var(--deep2);border:1px solid var(--border);border-radius:16px;padding:1.25rem;text-align:center;opacity:0.85">
+            topUpgBox.innerHTML = `<div style="background:var(--deep2);border:1px solid var(--border);border-radius:16px;padding:1.25rem;text-align:center;opacity:0.9">
               <div style="font-size:.75rem;color:var(--muted);font-weight:700;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.08em">⬆️ Upgrade to Level ${nextLvl}</div>
-              <button class="btn" style="font-size:1rem;padding:.65rem 1.5rem;width:100%;background:var(--muted);color:#fff;cursor:not-allowed" disabled>Complete ${SLOTS} Positions to Unlock</button>
+              <button class="btn" style="font-size:1rem;padding:.65rem 1.5rem;width:100%;background:#4B5563;color:#fff;cursor:not-allowed" disabled>🔒 Complete ${SLOTS} Positions to Unlock</button>
               <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Complete all positions on your current level to unlock your upgrade.</div>
             </div>`;
-          } else {
-            topUpgBox.innerHTML = '';
           }
         } else if (u.upgPending) {
           topUpgBox.innerHTML = `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:16px;padding:1rem;text-align:center">
@@ -7176,7 +7175,11 @@
             <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">Your upgrade to Level ${nextLvl} is being processed</div>
           </div>`;
         } else {
-          topUpgBox.innerHTML = '';
+          // Max level
+          topUpgBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(201,168,76,.1));border:2px solid #8B5CF6;border-radius:16px;padding:1.25rem;text-align:center">
+            <div style="font-size:.9rem;color:#8B5CF6;font-weight:700">👑 Level ${MAX_LEVEL} Complete!</div>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">You've reached the top. Share the opportunity with others!</div>
+          </div>`;
         }
       }
 
