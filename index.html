@@ -5661,6 +5661,9 @@
             </div>
           </div>
 
+          <!-- TOP UPGRADE BUTTON -->
+          <div id="top-upgrade-box" style="margin-bottom:1.2rem"></div>
+
           <!-- EARNINGS ARC WIDGET -->
           <div id="dash-arc-row"
             style="display:grid;grid-template-columns:auto 1fr;gap:1rem;align-items:center;margin-bottom:1.1rem">
@@ -7139,6 +7142,42 @@
       if (u.cycledOut || (u.recycleCount || 0) > 0) {
         ['ls4', 'lc7'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
         const co = document.getElementById('ls-co'); if (co) { co.classList.remove('done'); co.classList.add('cur'); }
+      }
+
+      // ════ TOP UPGRADE BUTTON ════
+      const topUpgBox = document.getElementById('top-upgrade-box');
+      if (topUpgBox) {
+        const isEligible = canUpgrade(u);
+        const nextLvl = u.level + 1;
+        const slotsFilled = recs.length;
+        const slotsNeeded = SLOTS - slotsFilled;
+
+        if (u.level < MAX_LEVEL && !u.upgPending) {
+          if (isEligible) {
+            // Eligible - show prominent upgrade button
+            topUpgBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(201,168,76,.15),rgba(34,197,94,.1));border:2px solid var(--gold);border-radius:16px;padding:1.25rem;text-align:center;box-shadow:0 4px 20px rgba(201,168,76,.25)">
+              <div style="font-size:.75rem;color:var(--gold);font-weight:700;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.08em">🎉 You're Ready to Level Up!</div>
+              <button class="btn btn-gold" style="font-size:1.1rem;padding:.75rem 2rem;width:100%;font-weight:700" onclick="confirmUpgrade()">🚀 Upgrade to Level ${nextLvl} Now</button>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Click to proceed to payment →</div>
+            </div>`;
+          } else if (!u.upgradeDone) {
+            // Not eligible - show disabled button
+            topUpgBox.innerHTML = `<div style="background:var(--deep2);border:1px solid var(--border);border-radius:16px;padding:1.25rem;text-align:center;opacity:0.85">
+              <div style="font-size:.75rem;color:var(--muted);font-weight:700;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.08em">⬆️ Upgrade to Level ${nextLvl}</div>
+              <button class="btn" style="font-size:1rem;padding:.65rem 1.5rem;width:100%;background:var(--muted);color:#fff;cursor:not-allowed" disabled>Complete ${SLOTS} Positions to Unlock</button>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Complete all positions on your current level to unlock your upgrade.</div>
+            </div>`;
+          } else {
+            topUpgBox.innerHTML = '';
+          }
+        } else if (u.upgPending) {
+          topUpgBox.innerHTML = `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:16px;padding:1rem;text-align:center">
+            <div style="font-size:.9rem;color:var(--info)">⏳ Upgrade Pending</div>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">Your upgrade to Level ${nextLvl} is being processed</div>
+          </div>`;
+        } else {
+          topUpgBox.innerHTML = '';
+        }
       }
 
       // Slots
