@@ -3000,6 +3000,33 @@
       border: 1px solid rgba(103, 232, 249, .22)
     }
 
+    /* New 2-step confirmation status badges */
+    .sbadge.pending-admin {
+      background: rgba(96, 165, 250, .15);
+      color: #60a5fa;
+      border: 1px solid rgba(96, 165, 250, .3)
+    }
+
+    .btn-confirm {
+      background: linear-gradient(135deg, #10b981, #059669) !important;
+      color: #fff !important;
+      border: none !important;
+      font-weight: 600;
+      animation: pulse-green 2s infinite;
+    }
+
+    @keyframes pulse-green {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+      }
+    }
+
     .sbadge.direct {
       background: rgba(52, 211, 153, .1);
       color: var(--gold);
@@ -6474,6 +6501,8 @@
         // Map extra camelCase keys to snake_case
         const mapped = { status };
         if (extra.overriddenByAdmin !== undefined) mapped.overridden_by_admin = extra.overriddenByAdmin;
+        if (extra.confirmedByMember !== undefined) mapped.confirmed_by_member = extra.confirmedByMember;
+        if (extra.confirmedAt !== undefined) mapped.confirmed_at = extra.confirmedAt;
         const { error } = await sbClient.from('pending_payments').update(mapped).eq('id', paymentId);
         if (error) console.error('sbUpdatePayment error:', error.message);
         else console.log('✅ Payment updated:', paymentId, '->', status);
@@ -8451,30 +8480,42 @@
     function renderApprovals() {
       const u = me;
       let mine;
+
+      // NEW 2-STEP CONFIRMATION SYSTEM:
+      // - Members see payments where THEY are the recipient (they should receive money)
+      // - Admin sees all payments
+      // - Status flow: uploaded → confirmed_by_member → approved
+
       if (u.role === 'admin') {
-        mine = db.pending.filter(p => p.status === 'pending');
+        // Admin sees all pending payments
+        mine = db.pending.filter(p => p.status === 'pending' || p.status === 'confirmed_by_member');
       } else {
-        mine = db.pending.filter(p => p.uplineId === u.id && p.status === 'pending' && p.type !== 'appfee' && p.type !== 'upgfee');
+        // Members see payments where they are the recipient (upline receives payment from new member)
+        mine = db.pending.filter(p => p.uplineId === u.id && (p.status === 'pending' || p.status === 'confirmed_by_member'));
       }
+
       const el = document.getElementById('approvals-list');
       if (!mine.length) {
-        el.innerHTML = `<div class="card" style="text-align:center;padding:2.5rem"><div style="font-size:3rem;margin-bottom:.9rem">✅</div><h3 style="color:var(--muted)">No pending approvals</h3><p style="color:var(--muted);font-size:.82rem">You're all caught up. Payments will appear here as they are submitted.</p></div>`;
+        el.innerHTML = `<div class="card" style="text-align:center;padding:2.5rem"><div style="font-size:3rem;margin-bottom:.9rem">✅</div><h3 style="color:var(--muted)">No pending confirmations</h3><p style="color:var(--muted);font-size:.82rem">Payments will appear here when members send you money.</p></div>`;
         return;
       }
 
-      // Count overrides available
-      const overrideCount = mine.filter(p => p.uploadedAt && hoursAgo(p.uploadedAt) >= 24).length;
+      // Count by status
+      const pendingCount = mine.filter(p => p.status === 'pending').length;
+      const confirmedCount = mine.filter(p => p.status === 'confirmed_by_member').length;
 
-      let h = `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem">${mine.length} payment${mine.length > 1 ? 's' : ''} awaiting confirmation.${overrideCount > 0 ? ` <strong style="color:var(--bad)"> · ${overrideCount} admin override${overrideCount > 1 ? 's' : ''} available (24h expired)</strong>` : ''}</p>`;
-
-      if (u.role === 'admin') {
-        h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>Two-part approval per member:</strong>
-      Admin approves <strong style="color:var(--gold)">R50 App Usage Fee</strong>.
-      Upline approves <strong style="color:var(--gold)">R150 Contribution</strong>.
-      Member activates once <em>both</em> are confirmed.
-      If recipient delays &gt;24h, <strong style="color:var(--bad)">admin override</strong> becomes available — click 👁 to view proof and override.</div>`;
+      let h = `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem">${mine.length} payment${mine.length > 1 ? 's' : ''} total. `;
+      if (u.role !== 'admin') {
+        h += `Confirm payments you've <strong style="color:var(--gold)">received</strong>, then admin will approve.</p>`;
+        h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>How it works:</strong><br>
+        1. Member sends you money<br>
+        2. You <strong style="color:var(--gold)">confirm receipt</strong> below<br>
+        3. Admin will then approve the payment</div>`;
       } else {
-        h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ Check your bank for <strong style="color:var(--gold)">R${JOIN}</strong> with reference <strong>their Member ID</strong>. Only approve once funds reflect in your account. Admin separately confirms the R${APP_FEE} app fee.</div>`;
+        h += `<strong>${pendingCount}</strong> waiting for member confirmation, <strong>${confirmedCount}</strong> ready for admin approval.</p>`;
+        h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>Two-step approval:</strong><br>
+        1. Member confirms they received the payment<br>
+        2. <strong style="color:var(--gold)">You approve</strong> to finalize</div>`;
       }
 
       mine.forEach(p => {
@@ -8486,6 +8527,22 @@
         const hrs = hoursAgo(p.uploadedAt);
         const expired = hrs >= 24;
         const nearExpiry = hrs >= 20 && hrs < 24;
+
+        // Status badge based on payment stage
+        let statusBadge, statusClass;
+        if (p.status === 'confirmed_by_member') {
+          statusBadge = '👁 Ready for Admin';
+          statusClass = 'pending-admin';
+        } else if (p.status === 'approved') {
+          statusBadge = '✅ Approved';
+          statusClass = 'approved';
+        } else if (p.status === 'rejected') {
+          statusBadge = '❌ Rejected';
+          statusClass = 'rejected';
+        } else {
+          statusBadge = '⏳ Waiting for Confirmation';
+          statusClass = 'pending';
+        }
 
         const typeLabel = p.type === 'appfee'
           ? `<span class="sbadge" style="background:rgba(201,168,76,.15);color:var(--gold);border:1px solid rgba(201,168,76,.3)">① R${APP_FEE} App Fee</span>`
@@ -8516,6 +8573,12 @@
         <div style="flex:1;font-size:.7rem">${fmtTimer(p.uploadedAt)} ${timerBadge(p.uploadedAt)}</div>
       </div>` : '';
 
+        // Show confirmation status for non-admin members
+        const confirmStatusHtml = p.status === 'confirmed_by_member' ? `
+      <div style="background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.5rem;margin:.5rem 0;font-size:.75rem;color:var(--ok)">
+        ✅ <strong>You confirmed receipt</strong> - Waiting for admin approval
+      </div>` : '';
+
         h += `<div class="appr-item" id="ai-${p.id}" style="${expired ? 'border-color:rgba(248,113,113,.3);' : ''}">
       <div class="appr-hdr">
         <div class="appr-mem">
@@ -8528,12 +8591,13 @@
           </div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem">
-          <span class="sbadge pending">⏳ Pending</span>
+          <span class="sbadge ${statusClass}">${statusBadge}</span>
           ${expired && u.role === 'admin' ? '<span class="sbadge" style="background:rgba(248,113,113,.15);color:var(--bad);border:1px solid rgba(248,113,113,.3);font-size:.58rem">🔑 Override Ready</span>' : ''}
         </div>
       </div>
 
       ${timerHtml}
+      ${confirmStatusHtml}
 
       <!-- RECIPIENT BANK DETAILS INLINE -->
       <div style="background:var(--deep2);border:1px solid var(--border2);border-radius:10px;padding:.75rem;margin:.6rem 0;font-size:.78rem">
@@ -8555,8 +8619,26 @@
 
       <div class="appr-acts">
         <button class="btn btn-outline btn-sm" style="gap:.3rem" onclick="openProofModal('${p.id}')">👁 View Proof & Details</button>
-        <button class="btn btn-ok btn-sm" onclick="approveP('${p.id}')">✅ Approve</button>
-        <button class="btn btn-bad btn-sm" onclick="rejectP('${p.id}')">❌ Reject</button>
+        
+        ${u.role === 'admin' ? `
+          <!-- Admin: Can approve payments that are confirmed by member -->
+          ${p.status === 'confirmed_by_member' ?
+              `<button class="btn btn-ok btn-sm" onclick="approveP('${p.id}')">✅ Approve</button>` :
+              `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5" title="Waiting for member to confirm receipt">✅ Approve</button>`
+            }
+        ` : `
+          <!-- Members: Can confirm they received payment -->
+          ${p.status === 'pending' ?
+            `<button class="btn btn-confirm btn-sm" onclick="confirmReceivedPayment('${p.id}')">✅ I Received the Money</button>` :
+            `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Confirmed</button>`
+          }
+        `}
+        
+        ${u.role === 'admin' || p.status === 'pending' ?
+            `<button class="btn btn-bad btn-sm" onclick="rejectP('${p.id}')">❌ Reject</button>` :
+            `<button class="btn btn-bad btn-sm" onclick="rejectP('${p.id}')" style="opacity:0.5" disabled>❌ Reject</button>`
+          }
+        
         ${u.role === 'admin' ? `<button class="btn btn-outline btn-sm" onclick="openMemberProfile('${p.memberId}')">👤 Sender Profile</button>` : ''}
         ${u.role === 'admin' && ul ? `<button class="btn btn-outline btn-sm" onclick="openMemberProfile('${ul.id}')">🏦 Recipient Profile</button>` : ''}
       </div>
@@ -8568,6 +8650,19 @@
 
     async function approveP(pid) {
       const pop = db.pending.find(p => p.id === pid); if (!pop) return;
+
+      // SECURITY: Only admin can approve payments
+      if (me.role !== 'admin') {
+        toast('❌ Only Admin can approve payments', 'err');
+        return;
+      }
+
+      // 2-STEP CONFIRMATION: Require member to confirm receipt first
+      if (pop.status !== 'confirmed_by_member') {
+        toast('⏳ Waiting for member to confirm payment receipt first', 'warn');
+        return;
+      }
+
       pop.status = 'approved';
       const mem = db.members.find(m => m.id === pop.memberId);
       const ul = db.members.find(m => m.id === pop.uplineId);
@@ -8662,6 +8757,79 @@
       await sbUpdatePayment(pid, 'rejected');
       toast('Payment rejected', 'warn');
       setTimeout(renderApprovals, 400);
+    }
+
+    // ════ MEMBER CONFIRMATION - 2-STEP APPROVAL SYSTEM ════
+    async function confirmReceivedPayment(pid) {
+      const pop = db.pending.find(p => p.id === pid);
+      if (!pop) return;
+
+      const mem = db.members.find(m => m.id === pop.memberId);
+      const memberName = mem ? mem.name : pop.memberName;
+      const paymentType = pop.type === 'join' ? 'Join (R150)' :
+        pop.type === 'upgrade' ? 'Upgrade (R' + pop.amount + ')' :
+          pop.type === 'appfee' ? 'App Fee (R50)' : 'Payment';
+
+      // Show confirmation popup
+      const confirmed = confirm(
+        `📋 Confirm Payment Receipt\n\n` +
+        `From: ${memberName} (${pop.memberId})\n` +
+        `Amount: R${pop.amount}\n` +
+        `Type: ${paymentType}\n\n` +
+        `Send Admin confirmation that I have received the payment successfully, and Admin may approve his payment?`
+      );
+
+      if (!confirmed) return;
+
+      // Update payment status
+      pop.status = 'confirmed_by_member';
+      pop.confirmedByMember = me.id;
+      pop.confirmedAt = Date.now();
+
+      // Save to database
+      await sbUpdatePayment(pid, 'confirmed_by_member', {
+        confirmedByMember: me.id,
+        confirmedAt: pop.confirmedAt
+      });
+
+      // Send notification to admin
+      createAdminNotification({
+        type: 'member_confirmed_payment',
+        payerId: pop.memberId,
+        payerName: memberName,
+        paymentId: pop.id,
+        amount: pop.amount,
+        paymentType: pop.type,
+        confirmedBy: me.name,
+        confirmedById: me.id,
+        message: `${me.name} confirmed receipt of R${pop.amount} from ${memberName} (${paymentType})`
+      });
+
+      toast('✅ Confirmation sent to Admin. They will approve shortly.', 'ok');
+      renderApprovals();
+    }
+
+    // Create notification for admin
+    function createAdminNotification(data) {
+      const adminNotifs = JSON.parse(localStorage.getItem('stokfel_admin_notifications') || '[]');
+      adminNotifs.unshift({
+        id: Date.now(),
+        ...data,
+        time: Date.now(),
+        read: false
+      });
+      // Keep only last 100 admin notifications
+      if (adminNotifs.length > 100) {
+        adminNotifs.splice(100);
+      }
+      localStorage.setItem('stokfel_admin_notifications', JSON.stringify(adminNotifs));
+
+      // Update admin badge if exists
+      const adminBadge = document.getElementById('appr-badge');
+      if (adminBadge) {
+        const pendingCount = db.pending.filter(p => p.status === 'confirmed_by_member').length;
+        adminBadge.textContent = pendingCount || '';
+      }
     }
 
     // ════ LEADERBOARD ════
