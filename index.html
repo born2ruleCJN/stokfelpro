@@ -7438,7 +7438,9 @@
       const myPend = u.role === 'admin'
         ? db.pending.filter(p => p.status === 'pending')
         : db.pending.filter(p => p.uplineId === u.id && p.status === 'pending' && p.type !== 'appfee');
-      if (myPend.length > 0 || u.role === 'admin') {
+      // Show tab for ALL logged-in members (not just those with pending payments)
+      // Also show for admin
+      if (u.role === 'admin' || true) {
         document.getElementById('nav-appr').style.display = 'flex';
         document.getElementById('appr-badge').textContent = myPend.length || '';
       }
@@ -8498,13 +8500,20 @@
         // Admin sees all pending payments
         mine = db.pending.filter(p => p.status === 'pending' || p.status === 'confirmed_by_member');
       } else {
-        // Members see payments where they are the recipient (upline receives payment from new member)
-        mine = db.pending.filter(p => p.uplineId === u.id && (p.status === 'pending' || p.status === 'confirmed_by_member'));
+        // Members see ALL their payments (both sent and received) for history view
+        // Include: payments where member is upline (received), payments where member is the payer (sent)
+        mine = db.pending.filter(p =>
+          p.uplineId === u.id || p.memberId === u.id
+        ).sort((a, b) => b.uploadedAt - a.uploadedAt); // Sort by newest first
       }
 
       const el = document.getElementById('approvals-list');
       if (!mine.length) {
-        el.innerHTML = `<div class="card" style="text-align:center;padding:2.5rem"><div style="font-size:3rem;margin-bottom:.9rem">✅</div><h3 style="color:var(--muted)">No pending confirmations</h3><p style="color:var(--muted);font-size:.82rem">Payments will appear here when members send you money.</p></div>`;
+        if (u.role === 'admin') {
+          el.innerHTML = `<div class="card" style="text-align:center;padding:2.5rem"><div style="font-size:3rem;margin-bottom:.9rem">✅</div><h3 style="color:var(--muted)">No pending confirmations</h3><p style="color:var(--muted);font-size:.82rem">Payments will appear here when members send you money.</p></div>`;
+        } else {
+          el.innerHTML = `<div class="card" style="text-align:center;padding:2.5rem"><div style="font-size:3rem;margin-bottom:.9rem">📋</div><h3 style="color:var(--muted)">No payment history</h3><p style="color:var(--muted);font-size:.82rem">Your payment confirmations will appear here once you receive or send payments.</p></div>`;
+        }
         return;
       }
 
@@ -8512,13 +8521,20 @@
       const pendingCount = mine.filter(p => p.status === 'pending').length;
       const confirmedCount = mine.filter(p => p.status === 'confirmed_by_member').length;
 
-      let h = `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem">${mine.length} payment${mine.length > 1 ? 's' : ''} total. `;
+      let h = `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem">${mine.length} payment${mine.length > 1 ? 's' : ''} in your history. `;
       if (u.role !== 'admin') {
-        h += `Confirm payments you've <strong style="color:var(--gold)">received</strong>, then admin will approve.</p>`;
-        h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>How it works:</strong><br>
-        1. Member sends you money<br>
-        2. You <strong style="color:var(--gold)">confirm receipt</strong> below<br>
-        3. Admin will then approve the payment</div>`;
+        // For members: show both pending and history
+        const pendingCount = mine.filter(p => p.status === 'pending').length;
+        const confirmedCount = mine.filter(p => p.status === 'confirmed_by_member' || p.status === 'approved' || p.status === 'done').length;
+        if (pendingCount > 0) {
+          h += `<strong style="color:var(--gold)">${pendingCount}</strong> pending confirmation. </p>`;
+          h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>How it works:</strong><br>
+          1. Member sends you money<br>
+          2. You <strong style="color:var(--gold)">confirm receipt</strong> below<br>
+          3. Admin will then approve the payment</div>`;
+        } else {
+          h += `All payments confirmed.</p>`;
+        }
       } else {
         h += `<strong>${pendingCount}</strong> waiting for member confirmation, <strong>${confirmedCount}</strong> ready for admin approval.</p>`;
         h += `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>Two-step approval:</strong><br>
@@ -8635,11 +8651,32 @@
               `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5" title="Waiting for member to confirm receipt">✅ Approve</button>`
             }
         ` : `
-          <!-- Members: Can confirm they received payment -->
-          ${p.status === 'pending' ?
-            `<button class="btn btn-confirm btn-sm" onclick="confirmReceivedPayment('${p.id}')">✅ I Received the Money</button>` :
-            `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Confirmed</button>`
+          <!-- Members: Show appropriate action based on payment status and role -->
+          ${p.uplineId === u.id ? `
+            <!-- Member is the recipient - can confirm receipt -->
+            ${p.status === 'pending' ?
+              `<button class="btn btn-confirm btn-sm" onclick="confirmReceivedPayment('${p.id}')">✅ I Received the Money</button>` :
+              p.status === 'confirmed_by_member' ?
+                `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">⏳ Awaiting Admin Approval</button>` :
+                p.status === 'approved' || p.status === 'done' ?
+                  `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Completed</button>` :
+                  p.status === 'rejected' ?
+                    `<button class="btn btn-bad btn-sm" disabled style="opacity:0.5">❌ Rejected</button>` :
+                    `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">${p.status}</button>`
+            }
+          ` : `
+            <!-- Member is the sender - read-only view -->
+            ${p.status === 'pending' ?
+            `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">⏳ Awaiting Recipient</button>` :
+            p.status === 'confirmed_by_member' ?
+              `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Confirmed by Recipient</button>` :
+              p.status === 'approved' || p.status === 'done' ?
+                `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Completed</button>` :
+                p.status === 'rejected' ?
+                  `<button class="btn btn-bad btn-sm" disabled style="opacity:0.5">❌ Rejected</button>` :
+                  `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">${p.status}</button>`
           }
+          `}
         `}
         
         ${u.role === 'admin' || p.status === 'pending' ?
