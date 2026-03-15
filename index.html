@@ -5787,7 +5787,8 @@
         <div class="nav-item" onclick="goPage('howitworks')"><span class="ni">📖</span>How It Works</div>
         <div class="nav-item" onclick="goPage('training')"><span class="ni">🎓</span>Training Centre</div>
         <div class="nav-item" onclick="goPage('faq')"><span class="ni">❓</span>FAQs</div>
-        <div class="nav-item" onclick="goPage('adminbanking')"><span class="ni">🏦</span>Admin Banking</div>
+        <div class="nav-item" id="nav-adminbanking" style="display:none" onclick="goPage('adminbanking')"><span
+            class="ni">🏦</span>Admin Banking</div>
         <div class="nav-item" onclick="goPage('report')"><span class="ni">🚨</span>Report / Comment</div>
         <div class="nav-sec" id="admin-sec" style="display:none">Administration</div>
         <div class="nav-item" id="nav-admin" style="display:none" onclick="goPage('admin')"><span
@@ -6753,6 +6754,12 @@
       setTimeout(animateCounter, 1000);
     });
     function goPage(id) {
+      // Security: Block non-admin users from accessing admin pages
+      const adminPages = ['admin', 'settings', 'adminbanking'];
+      if (adminPages.includes(id) && me.role !== 'admin') {
+        toast('Access denied. Admin privileges required.', 'warn');
+        return;
+      }
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       const pg = document.getElementById('pg-' + id);
       if (pg) pg.classList.add('active');
@@ -7436,10 +7443,11 @@
         document.getElementById('appr-badge').textContent = myPend.length || '';
       }
       if (u.role === 'admin') {
-        ['nav-admin', 'nav-settings', 'admin-sec'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = el.classList.contains('nav-sec') || id === 'admin-sec' ? 'block' : 'flex'; });
+        ['nav-admin', 'nav-settings', 'admin-sec', 'nav-adminbanking'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = el.classList.contains('nav-sec') || id === 'admin-sec' ? 'block' : 'flex'; });
         document.getElementById('admin-sec').style.display = 'block';
         document.getElementById('nav-admin').style.display = 'flex';
         document.getElementById('nav-settings').style.display = 'flex';
+        document.getElementById('nav-adminbanking').style.display = 'flex';
         // Pre-seed token if not already stored (from this session's known token)
       }
       goPage('dashboard');
