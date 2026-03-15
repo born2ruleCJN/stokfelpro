@@ -2351,6 +2351,149 @@
       text-align: center
     }
 
+    /* ── Notification Bell Styles ── */
+    .notif-bell {
+      position: relative;
+      cursor: pointer;
+      font-size: 1.3rem;
+      padding: .5rem;
+      transition: transform .2s;
+    }
+
+    .notif-bell:hover {
+      transform: scale(1.1);
+    }
+
+    .notif-bell .dot {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 10px;
+      height: 10px;
+      background: var(--bad);
+      border-radius: 50%;
+      border: 2px solid var(--deep);
+      animation: pulse 2s infinite;
+    }
+
+    .notif-dropdown {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      width: 320px;
+      max-height: 400px;
+      overflow-y: auto;
+      background: var(--deep2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .4);
+      z-index: 1000;
+      display: none;
+    }
+
+    .notif-dropdown.show {
+      display: block;
+      animation: fadeUp .2s ease;
+    }
+
+    .notif-header {
+      padding: .75rem 1rem;
+      border-bottom: 1px solid var(--border2);
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .notif-item {
+      padding: .75rem 1rem;
+      border-bottom: 1px solid var(--border2);
+      cursor: pointer;
+      transition: background .2s;
+    }
+
+    .notif-item:hover {
+      background: var(--deep);
+    }
+
+    .notif-item.unread {
+      border-left: 3px solid var(--gold);
+    }
+
+    .notif-item .ni-title {
+      font-size: .8rem;
+      font-weight: 600;
+      margin-bottom: .2rem;
+    }
+
+    .notif-item .ni-desc {
+      font-size: .7rem;
+      color: var(--muted);
+    }
+
+    .notif-item .ni-time {
+      font-size: .6rem;
+      color: var(--muted);
+      margin-top: .3rem;
+    }
+
+    .notif-empty {
+      padding: 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: .8rem;
+    }
+
+    .notif-mark-read {
+      font-size: .65rem;
+      color: var(--gold);
+      cursor: pointer;
+    }
+
+    .notif-icon {
+      font-size: 1.5rem;
+      margin-right: .75rem;
+    }
+
+    .notif-content {
+      flex: 1;
+    }
+
+    .notif-title {
+      font-size: .85rem;
+      font-weight: 600;
+      margin-bottom: .2rem;
+    }
+
+    .notif-msg {
+      font-size: .75rem;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+
+    .notif-time {
+      font-size: .65rem;
+      color: var(--muted);
+      margin-top: .3rem;
+    }
+
+    .notif-item {
+      display: flex;
+      align-items: flex-start;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: .5;
+      }
+    }
+
     .sb-bottom {
       margin-top: auto;
       padding: .9rem 1.4rem;
@@ -5588,6 +5731,16 @@
             alt="StokfelPro"
             style="width:42px;height:42px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(201,168,76,.3))">
           <h2 style="margin:0">Stokfel<span>Pro</span></h2>
+          <div class="notif-bell" id="notif-bell" onclick="toggleNotifDropdown()">
+            🔔<span class="dot" id="notif-dot" style="display:none"></span>
+            <div class="notif-dropdown" id="notif-dropdown">
+              <div class="notif-header">
+                <span>🔔 Notifications</span>
+                <span class="notif-mark-read" onclick="markAllNotifRead(event)">Mark all read</span>
+              </div>
+              <div id="notif-list"></div>
+            </div>
+          </div>
         </div>
         <div class="nav-sec">Main</div>
         <div class="nav-item active" onclick="goPage('dashboard')"><span class="ni">🏠</span>Dashboard</div>
@@ -6286,6 +6439,7 @@
     // ── PENDING PAYMENTS ──
     async function sbSavePending(payment) {
       const idx = db.pending.findIndex(p => p.id === payment.id);
+      const isNew = idx < 0;
       if (idx >= 0) db.pending[idx] = payment; else db.pending.push(payment);
       if (!sbClient) { console.warn('sbSavePending: no sbClient'); return; }
       try {
@@ -6297,6 +6451,17 @@
           toast('Payment DB error: ' + error.message, 'err');
         } else {
           console.log('✅ Payment saved OK:', data);
+          // Create notification for new payments
+          if (isNew) {
+            const membersData = localStorage.getItem('stokfel_members');
+            const members = membersData ? JSON.parse(membersData) : {};
+            const member = members[payment.memberId];
+            const memberName = member ? (member.name || member.phone) : 'Unknown';
+            const paymentType = payment.id.startsWith('JOIN-') ? 'join' :
+              (payment.id.startsWith('UPG-') ? 'upgrade' :
+                (payment.id.startsWith('RCY-') ? 'recycle' : 'payment'));
+            setTimeout(() => createPaymentNotification(payment, memberName, paymentType), 500);
+          }
         }
       } catch (e) { console.error('❌ sbSavePending exception:', e.message); }
     }
@@ -6584,6 +6749,178 @@
       document.getElementById('sidebar').classList.remove('open');
       document.getElementById('sb-overlay').classList.remove('show');
     }
+
+    // ════ NOTIFICATIONS SYSTEM ════
+    let notifications = [];
+
+    function toggleNotifDropdown() {
+      const dropdown = document.getElementById('notif-dropdown');
+      dropdown.classList.toggle('show');
+      if (dropdown.classList.contains('show')) {
+        renderNotifications();
+      }
+    }
+
+    function renderNotifications() {
+      const list = document.getElementById('notif-list');
+      const bell = document.getElementById('notif-bell');
+      const dot = document.getElementById('notif-dot');
+
+      // Get current user from localStorage
+      const currentUser = JSON.parse(localStorage.getItem('stokfel_user') || '{}');
+      if (!currentUser.id) return;
+
+      // Load notifications from localStorage
+      const storedNotifs = localStorage.getItem('stokfel_notifications_' + currentUser.id);
+      notifications = storedNotifs ? JSON.parse(storedNotifs) : [];
+
+      // Update bell dot visibility
+      const unreadCount = notifications.filter(n => !n.read).length;
+      dot.style.display = unreadCount > 0 ? 'block' : 'none';
+
+      if (notifications.length === 0) {
+        list.innerHTML = '<div class="notif-empty">No notifications yet</div>';
+        return;
+      }
+
+      list.innerHTML = notifications.map((n, idx) => `
+        <div class="notif-item ${n.read ? '' : 'unread'}" onclick="handleNotifClick(${idx})">
+          <div class="notif-icon">${n.icon || '💰'}</div>
+          <div class="notif-content">
+            <div class="notif-title">${n.title}</div>
+            <div class="notif-msg">${n.message}</div>
+            <div class="notif-time">${formatNotifTime(n.time)}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function formatNotifTime(timestamp) {
+      const now = Date.now();
+      const diff = now - timestamp;
+      const mins = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return mins + 'm ago';
+      if (hours < 24) return hours + 'h ago';
+      return days + 'd ago';
+    }
+
+    function handleNotifClick(idx) {
+      const notif = notifications[idx];
+      if (!notif.read) {
+        notifications[idx].read = true;
+        saveNotifications();
+        renderNotifications();
+      }
+
+      // Navigate to approvals if payment approval notification
+      if (notif.type === 'payment_approval') {
+        goPage('approvals');
+        document.getElementById('notif-dropdown').classList.remove('show');
+      }
+    }
+
+    function markAllNotifRead(event) {
+      event.stopPropagation();
+      notifications.forEach(n => n.read = true);
+      saveNotifications();
+      renderNotifications();
+    }
+
+    function saveNotifications() {
+      const currentUser = JSON.parse(localStorage.getItem('stokfel_user') || '{}');
+      if (currentUser.id) {
+        localStorage.setItem('stokfel_notifications_' + currentUser.id, JSON.stringify(notifications));
+      }
+    }
+
+    function createPaymentNotification(payment, memberName, type) {
+      const currentUser = JSON.parse(localStorage.getItem('stokfel_user') || '{}');
+      if (!currentUser.id) return;
+
+      // Check if notification already exists for this payment
+      const existingNotif = notifications.find(n =>
+        n.paymentId === payment.id && n.type === 'payment_approval'
+      );
+      if (existingNotif) return;
+
+      let title, message, icon;
+
+      if (type === 'join') {
+        title = 'New Member Payment';
+        message = `${memberName} joined and paid R${payment.amount}. Approval needed.`;
+        icon = '👤';
+      } else if (type === 'upgrade') {
+        title = 'Upgrade Payment';
+        message = `${memberName} upgraded to ${payment.level}. Approval needed.`;
+        icon = '⬆️';
+      } else if (type === 'admin_override') {
+        title = 'Admin Override';
+        message = `Admin forced approval for ${memberName}'s payment.`;
+        icon = '⚡';
+      } else {
+        title = 'Payment Approval';
+        message = `${memberName} payment of R${payment.amount}. Approval needed.`;
+        icon = '💰';
+      }
+
+      notifications.unshift({
+        id: Date.now(),
+        type: 'payment_approval',
+        paymentId: payment.id,
+        title: title,
+        message: message,
+        icon: icon,
+        time: Date.now(),
+        read: false
+      });
+
+      // Keep only last 50 notifications
+      if (notifications.length > 50) {
+        notifications = notifications.slice(0, 50);
+      }
+
+      saveNotifications();
+      renderNotifications();
+    }
+
+    function checkPendingPayments() {
+      // This will check for pending payments and create notifications
+      // Called on app load and when checking approvals
+      const pendingData = localStorage.getItem('stokfel_pending_payments');
+      if (!pendingData) return;
+
+      const pending = JSON.parse(pendingData);
+      if (!pending || pending.length === 0) return;
+
+      // Get member data for names
+      const membersData = localStorage.getItem('stokfel_members');
+      const members = membersData ? JSON.parse(membersData) : {};
+
+      pending.forEach(p => {
+        const member = members[p.userId];
+        if (member) {
+          const type = p.type === 'join' ? 'join' :
+            (p.type === 'upgrade' ? 'upgrade' : 'payment');
+          createPaymentNotification(p, member.name || member.phone, type);
+        }
+      });
+    }
+
+    // Check for pending payments on app init
+    setTimeout(checkPendingPayments, 2000);
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function (e) {
+      const bell = document.getElementById('notif-bell');
+      const dropdown = document.getElementById('notif-dropdown');
+      if (bell && dropdown && !bell.contains(e.target)) {
+        dropdown.classList.remove('show');
+      }
+    });
 
     // ════ TOAST ════
     function toast(msg, type = 'ok') {
