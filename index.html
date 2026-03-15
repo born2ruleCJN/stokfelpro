@@ -5774,8 +5774,6 @@
         <div class="nav-item" onclick="goPage('payment')"><span class="ni">💳</span>My Payment</div>
         <div class="nav-item" onclick="goPage('matrix')"><span class="ni">🌳</span>My Matrix</div>
         <div class="nav-item" onclick="goPage('earnings')"><span class="ni">💰</span>Earnings & Levels</div>
-        <div class="nav-item" id="nav-payconfirm" style="display:none" onclick="goPage('payconfirm')"><span
-            class="ni">💵</span>Payment Confirmations<span class="nav-badge" id="payconfirm-badge"></span></div>
         <div class="nav-item" id="nav-appr" style="display:none" onclick="goPage('approvals')"><span
             class="ni">✅</span>Approve Payments<span class="nav-badge" id="appr-badge"></span></div>
         <div class="nav-sec">Community</div>
@@ -6028,14 +6026,6 @@
             <h3>📁 My Banking Details</h3>
             <div id="my-bank"></div>
           </div>
-        </div>
-
-        <div id="pg-payconfirm" class="page">
-          <div class="pg-hdr">
-            <h2>💵 Payment Confirmations</h2>
-            <p>Confirm payments you have received from members</p>
-          </div>
-          <div id="payconfirm-list"></div>
         </div>
 
         <div id="pg-matrix" class="page">
@@ -6770,14 +6760,6 @@
         toast('Access denied. Admin privileges required.', 'warn');
         return;
       }
-
-      // Security: Block admin users from accessing member-only pages
-      const memberPages = ['payconfirm'];
-      if (memberPages.includes(id) && me.role === 'admin') {
-        toast('Access denied. This page is for members only.', 'warn');
-        return;
-      }
-
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       const pg = document.getElementById('pg-' + id);
       if (pg) pg.classList.add('active');
@@ -6790,8 +6772,7 @@
         ledger: renderLedger, referral: renderReferral, rewards: renderRewards,
         invite: renderInvite, howitworks: renderHIW, training: renderTraining,
         faq: renderFAQ, admin: renderAdmin, settings: renderSettings,
-        adminbanking: renderAdminBanking, report: renderReport,
-        payconfirm: renderPayConfirmations
+        adminbanking: renderAdminBanking, report: renderReport
       };
       if (rmap[id]) rmap[id]();
       closeSB();
@@ -7455,23 +7436,12 @@
       document.getElementById('sb-lvl').textContent = 'Level ' + u.level + ' · ' + rk.icon + ' ' + rk.lbl;
 
       const myPend = u.role === 'admin'
-        ? db.pending.filter(p => p.status === 'pending' || p.status === 'confirmed_by_member')
+        ? db.pending.filter(p => p.status === 'pending')
         : db.pending.filter(p => p.uplineId === u.id && p.status === 'pending' && p.type !== 'appfee');
-
-      // Members: Show "Payment Confirmations" tab always (regardless of pending payments)
-      if (u.role !== 'admin') {
-        const memberPend = db.pending.filter(p => p.uplineId === u.id && p.status === 'pending' && p.type !== 'appfee');
-        document.getElementById('nav-payconfirm').style.display = 'flex';
-        document.getElementById('payconfirm-badge').textContent = memberPend.length || '';
-      }
-
-      // Admins: Show "Approve Payments" tab when there are payments to approve
-      if (u.role === 'admin') {
-        const adminPend = db.pending.filter(p => p.status === 'pending' || p.status === 'confirmed_by_member');
+      if (myPend.length > 0 || u.role === 'admin') {
         document.getElementById('nav-appr').style.display = 'flex';
-        document.getElementById('appr-badge').textContent = adminPend.length || '';
+        document.getElementById('appr-badge').textContent = myPend.length || '';
       }
-
       if (u.role === 'admin') {
         ['nav-admin', 'nav-settings', 'admin-sec', 'nav-adminbanking'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = el.classList.contains('nav-sec') || id === 'admin-sec' ? 'block' : 'flex'; });
         document.getElementById('admin-sec').style.display = 'block';
@@ -8513,344 +8483,6 @@
       m.frozenUntil = null;
       toast('🔓 ' + m.name + ' unfrozen', 'ok');
       closeProfileModal();
-    }
-
-    // ════ MEMBER PAYMENT CONFIRMATIONS PAGE ════
-    function renderPayConfirmations() {
-      const u = me;
-
-      // Security: Only members can access this page
-      if (u.role === 'admin') {
-        toast('Access denied. This page is for members only.', 'warn');
-        goPage('dashboard');
-        return;
-      }
-
-      const el = document.getElementById('payconfirm-list');
-
-      // Get pending payments (waiting for member confirmation)
-      const pendingPayments = db.pending.filter(p =>
-        p.uplineId === u.id && p.status === 'pending' && p.type !== 'appfee'
-      );
-
-      // Get confirmed payments (already confirmed by member, awaiting admin approval)
-      const confirmedPayments = db.pending.filter(p =>
-        p.uplineId === u.id && p.status === 'confirmed_by_member' && p.type !== 'appfee'
-      );
-
-      // Get approved payments (history - completed confirmations)
-      const historyPayments = db.pending.filter(p =>
-        p.uplineId === u.id && p.status === 'approved' && p.type !== 'appfee'
-      ).sort((a, b) => (b.confirmedAt || b.uploadedAt) - (a.confirmedAt || a.uploadedAt));
-
-      let h = `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>How it works:</strong><br>
-        1. A member sends you money<br>
-        2. You <strong style="color:var(--gold)">confirm receipt</strong> below<br>
-        3. Admin will then approve the payment</div>
-        
-        <!-- Section 1: Pending Payment Confirmations -->
-        <h3 style="margin:1.5rem 0 .75rem">⏳ Pending Confirmations</h3>`;
-
-      if (!pendingPayments.length) {
-        h += `<div class="card" style="text-align:center;padding:1.5rem;background:var(--deep2);border:1px solid var(--border2)">
-          <div style="font-size:1.5rem;margin-bottom:.5rem">✅</div>
-          <p style="color:var(--muted);font-size:.85rem">No payments currently awaiting confirmation.</p>
-        </div>`;
-      } else {
-        h += `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem"><strong>${pendingPayments.length}</strong> payment${pendingPayments.length > 1 ? 's' : ''} waiting for your confirmation.</p>`;
-
-        pendingPayments.forEach(p => {
-          const mem = db.members.find(m => m.id === p.memberId);
-          const hrs = hoursAgo(p.uploadedAt);
-          const expired = hrs >= 24;
-          const nearExpiry = hrs >= 20 && hrs < 24;
-
-          const typeLabel = p.type === 'join'
-            ? `<span class="sbadge" style="background:rgba(52,211,153,.12);color:var(--gold);border:1px solid rgba(52,211,153,.25)">② R${JOIN} Join Contribution</span>`
-            : p.type === 'upgrade'
-              ? `<span class="sbadge upgrade">⬆ R${p.amount} Upgrade Payment</span>`
-              : `<span class="sbadge">💰 R${p.amount} Payment</span>`;
-
-          const proofHtml = p.filename ? `<div style="margin-top:.5rem"><strong>Proof:</strong> 📎 ${p.filename}</div>` : '';
-
-          const timerHtml = p.uploadedAt ? `<div class="timer-bar ${timerClass(p.uploadedAt)}" style="margin-top:.5rem;padding:.4rem .6rem"><span style="font-size:.85rem">${expired ? '🔴' : nearExpiry ? '⚠️' : '⏱'}</span><div style="flex:1;font-size:.7rem">${fmtTimer(p.uploadedAt)} ${timerBadge(p.uploadedAt)}</div></div>` : '';
-
-          h += `<div class="appr-item" style="${expired ? 'border-color:rgba(248,113,113,.3);' : ''}">
-        <div class="appr-hdr">
-          <div class="appr-mem">
-            <div class="appr-av">${p.memberName.charAt(0)}</div>
-            <div class="appr-info">
-              <div class="an">${p.memberName} ${typeLabel}</div>
-              <div class="ad">${p.date}${p.uploadedAt ? ' · ' + new Date(p.uploadedAt).toLocaleTimeString() : ''}</div>
-              <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">📱 ${mem ? mem.cell : 'N/A'} · 🆔 ${p.memberId}</div>
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem">
-            <span class="sbadge pending">⏳ Waiting for Confirmation</span>
-          </div>
-        </div>
-        ${timerHtml}
-        <div style="background:var(--deep2);border:1px solid var(--border2);border-radius:10px;padding:.75rem;margin:.6rem 0;font-size:.78rem">
-          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--ok);margin-bottom:.45rem">💳 Payment Details</div>
-          <div class="bank-row"><span class="bl">Amount</span><span class="bv hl" style="color:var(--gold)">R${p.amount}</span></div>
-          <div class="bank-row"><span class="bl">From</span><span class="bv">${p.memberName} (${p.memberId})</span></div>
-          <div class="bank-row"><span class="bl">Contact</span><span class="bv">${mem ? mem.cell : 'N/A'}</span></div>
-          ${proofHtml}
-        </div>
-        <div class="appr-acts">
-          <button class="btn btn-confirm btn-sm" onclick="showConfirmPopup('${p.id}')">✅ Confirm Payment Received</button>
-        </div>
-      </div>`;
-        });
-      }
-
-      // Section 2: Awaiting Admin Approval
-      if (confirmedPayments.length > 0) {
-        h += `<h3 style="margin:1.5rem 0 .75rem">👁 Awaiting Admin Approval</h3>`;
-        h += `<p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem"><strong>${confirmedPayments.length}</strong> payment${confirmedPayments.length > 1 ? 's' : ''} confirmed by you, waiting for admin approval.</p>`;
-
-        confirmedPayments.forEach(p => {
-          const mem = db.members.find(m => m.id === p.memberId);
-          const typeLabel = p.type === 'join'
-            ? `<span class="sbadge" style="background:rgba(52,211,153,.12);color:var(--gold);border:1px solid rgba(52,211,153,.25)">② R${JOIN} Join</span>`
-            : p.type === 'upgrade'
-              ? `<span class="sbadge upgrade">⬆ R${p.amount} Upgrade</span>`
-              : `<span class="sbadge">💰 R${p.amount}</span>`;
-
-          h += `<div class="appr-item" style="opacity:0.8">
-        <div class="appr-hdr">
-          <div class="appr-mem">
-            <div class="appr-av">${p.memberName.charAt(0)}</div>
-            <div class="appr-info">
-              <div class="an">${p.memberName} ${typeLabel}</div>
-              <div class="ad">${p.date}</div>
-              <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">📱 ${mem ? mem.cell : 'N/A'} · 🆔 ${p.memberId}</div>
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem">
-            <span class="sbadge pending-admin">👁 Pending Admin Approval</span>
-          </div>
-        </div>
-        <div style="background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.5rem;margin:.5rem 0;font-size:.75rem;color:var(--ok)">
-          ✅ <strong>You confirmed receipt</strong> - Waiting for admin approval
-        </div>
-      </div>`;
-        });
-      }
-
-      // Section 3: Confirmation History
-      h += `<h3 style="margin:1.5rem 0 .75rem">📋 Confirmation History</h3>`;
-
-      if (!historyPayments.length) {
-        h += `<div class="card" style="text-align:center;padding:1.5rem;background:var(--deep2);border:1px solid var(--border2)">
-          <div style="font-size:1.5rem;margin-bottom:.5rem">📋</div>
-          <p style="color:var(--muted);font-size:.85rem">No confirmation history yet.</p>
-        </div>`;
-      } else {
-        h += `<div style="overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;font-size:.8rem">
-            <thead>
-              <tr style="border-bottom:1px solid var(--border)">
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">Payer Name</th>
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">SP ID</th>
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">Date</th>
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">Type</th>
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">Amount</th>
-                <th style="text-align:left;padding:.5rem;color:var(--muted)">Status</th>
-              </tr>
-            </thead>
-            <tbody>`;
-
-        historyPayments.forEach(p => {
-          const typeLabel = p.type === 'join' ? 'Join' : p.type === 'upgrade' ? 'Upgrade' : 'Payment';
-          const statusBadge = p.status === 'approved'
-            ? `<span style="color:var(--ok)">✅ Approved</span>`
-            : `<span style="color:var(--muted)">${p.status}</span>`;
-
-          h += `<tr style="border-bottom:1px solid var(--border2)">
-            <td style="padding:.5rem">${p.memberName}</td>
-            <td style="padding:.5rem;color:var(--muted)">${p.memberId}</td>
-            <td style="padding:.5rem;color:var(--muted)">${p.date}</td>
-            <td style="padding:.5rem">${typeLabel}</td>
-            <td style="padding:.5rem;color:var(--gold)">R${p.amount}</td>
-            <td style="padding:.5rem">${statusBadge}</td>
-          </tr>`;
-        });
-
-        h += `</tbody></table></div>`;
-      }
-
-      el.innerHTML = h;
-    }
-
-    // ════ CONFIRMATION POPUP ════
-    const confirmedCount = myPayments.filter(p => p.status === 'confirmed_by_member').length;
-
-    let h = `<div class="info-box" style="margin-bottom:1rem">ℹ️ <strong>How it works:</strong><br>
-        1. A member sends you money<br>
-        2. You <strong style="color:var(--gold)">confirm receipt</strong> below<br>
-        3. Admin will then approve the payment</div>
-        <p style="color:var(--muted);font-size:.82rem;margin-bottom:.9rem">${myPayments.length} payment${myPayments.length > 1 ? 's' : ''} total. <strong>${pendingCount}</strong> waiting for confirmation, <strong>${confirmedCount}</strong> awaiting admin approval.</p>`;
-
-    myPayments.forEach(p => {
-      const mem = db.members.find(m => m.id === p.memberId);
-      const hrs = hoursAgo(p.uploadedAt);
-      const expired = hrs >= 24;
-      const nearExpiry = hrs >= 20 && hrs < 24;
-
-      // Status badge
-      let statusBadge, statusClass, statusText;
-      if (p.status === 'confirmed_by_member') {
-        statusBadge = '👁 Pending Admin Approval';
-        statusClass = 'pending-admin';
-        statusText = 'Waiting for admin to approve';
-      } else {
-        statusBadge = '⏳ Waiting for Confirmation';
-        statusClass = 'pending';
-        statusText = 'Confirm you have received the payment';
-      }
-
-      // Payment type label
-      const typeLabel = p.type === 'join'
-        ? `<span class="sbadge" style="background:rgba(52,211,153,.12);color:var(--gold);border:1px solid rgba(52,211,153,.25)">② R${JOIN} Join Contribution</span>`
-        : p.type === 'upgrade'
-          ? `<span class="sbadge upgrade">⬆ R${p.amount} Upgrade Payment</span>`
-          : `<span class="sbadge">💰 R${p.amount} Payment</span>`;
-
-      // Proof of payment preview
-      const proofHtml = p.filename
-        ? `<div style="margin-top:.5rem"><strong>Proof of Payment:</strong> 📎 ${p.filename}</div>`
-        : '';
-
-      // Timer
-      const timerHtml = p.uploadedAt ? `
-      <div class="timer-bar ${timerClass(p.uploadedAt)}" style="margin-top:.5rem;padding:.4rem .6rem">
-        <span style="font-size:.85rem">${expired ? '🔴' : nearExpiry ? '⚠️' : '⏱'}</span>
-        <div style="flex:1;font-size:.7rem">${fmtTimer(p.uploadedAt)} ${timerBadge(p.uploadedAt)}</div>
-      </div>` : '';
-
-      // Confirmation status
-      const confirmStatusHtml = p.status === 'confirmed_by_member' ? `
-      <div style="background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.5rem;margin:.5rem 0;font-size:.75rem;color:var(--ok)">
-        ✅ <strong>You confirmed receipt</strong> - Waiting for admin approval
-      </div>` : '';
-
-      h += `<div class="appr-item" style="${expired ? 'border-color:rgba(248,113,113,.3);' : ''}">
-      <div class="appr-hdr">
-        <div class="appr-mem">
-          <div class="appr-av">${p.memberName.charAt(0)}</div>
-          <div class="appr-info">
-            <div class="an">${p.memberName} ${typeLabel}</div>
-            <div class="ad">${p.date}${p.uploadedAt ? ' · ' + new Date(p.uploadedAt).toLocaleTimeString() : ''}</div>
-            <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">📱 ${mem ? mem.cell : 'N/A'} · 🆔 ${p.memberId}</div>
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem">
-          <span class="sbadge ${statusClass}">${statusBadge}</span>
-        </div>
-      </div>
-      
-      ${timerHtml}
-      ${confirmStatusHtml}
-      
-      <div style="background:var(--deep2);border:1px solid var(--border2);border-radius:10px;padding:.75rem;margin:.6rem 0;font-size:.78rem">
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--ok);margin-bottom:.45rem">💳 Payment Details</div>
-        <div class="bank-row"><span class="bl">Amount</span><span class="bv hl" style="color:var(--gold)">R${p.amount}</span></div>
-        <div class="bank-row"><span class="bl">From Member</span><span class="bv">${p.memberName} (${p.memberId})</span></div>
-        <div class="bank-row"><span class="bl">Contact</span><span class="bv">${mem ? mem.cell : 'N/A'}</span></div>
-        ${proofHtml}
-      </div>
-      
-      <div class="appr-acts">
-        ${p.status === 'pending' ?
-          `<button class="btn btn-confirm btn-sm" onclick="showConfirmPopup('${p.id}')">✅ Confirm Payment Received</button>` :
-          `<button class="btn btn-ok btn-sm" disabled style="opacity:0.5">✅ Confirmed - Pending Admin</button>`
-        }
-      </div>
-    </div>`;
-    });
-
-    el.innerHTML = h;
-    }
-
-    // ════ CONFIRMATION POPUP ════
-    function showConfirmPopup(pid) {
-      const p = db.pending.find(x => x.id === pid);
-      if (!p) return;
-
-      const mem = db.members.find(m => m.id === p.memberId);
-      const memberName = mem ? mem.name : p.memberName;
-      const paymentType = p.type === 'join' ? 'Join (R150)' : p.type === 'upgrade' ? 'Upgrade (R' + p.amount + ')' : 'Payment (R' + p.amount + ')';
-
-      // Create popup
-      const popup = document.createElement('div');
-      popup.id = 'confirm-popup';
-      popup.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;';
-
-      popup.innerHTML = `
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:16px;padding:1.5rem;max-width:400px;width:90%;text-align:center;">
-          <div style="font-size:2.5rem;margin-bottom:1rem">💵</div>
-          <h3 style="margin-bottom:.5rem">Confirm Payment Received</h3>
-          <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
-            Confirm that you have received this payment successfully and notify Admin for final approval.
-          </p>
-          <div style="background:var(--deep2);border-radius:8px;padding:1rem;margin-bottom:1.5rem;text-align:left;font-size:.82rem">
-            <div><strong>From:</strong> ${memberName}</div>
-            <div><strong>Amount:</strong> R${p.amount}</div>
-            <div><strong>Type:</strong> ${paymentType}</div>
-          </div>
-          <div style="display:flex;gap:.75rem;justify-content:center;">
-            <button class="btn btn-bad" onclick="closeConfirmPopup()">No</button>
-            <button class="btn btn-ok" onclick="confirmMemberPayment('${p.id}')">Yes</button>
-          </div>
-        </div>
-      `;
-
-      document.body.appendChild(popup);
-    }
-
-    function closeConfirmPopup() {
-      const popup = document.getElementById('confirm-popup');
-      if (popup) popup.remove();
-    }
-
-    async function confirmMemberPayment(pid) {
-      const pop = db.pending.find(p => p.id === pid);
-      if (!pop) return;
-
-      const mem = db.members.find(m => m.id === pop.memberId);
-      const memberName = mem ? mem.name : pop.memberName;
-
-      // Update payment status
-      pop.status = 'confirmed_by_member';
-      pop.confirmedByMember = me.id;
-      pop.confirmedAt = Date.now();
-
-      // Save to database
-      await sbUpdatePayment(pid, 'confirmed_by_member', {
-        confirmedByMember: me.id,
-        confirmedAt: pop.confirmedAt
-      });
-
-      // Send notification to admin
-      createAdminNotification({
-        type: 'member_confirmed_payment',
-        payerId: pop.memberId,
-        payerName: memberName,
-        paymentId: pop.id,
-        amount: pop.amount,
-        paymentType: pop.type,
-        confirmedBy: me.name,
-        confirmedById: me.id,
-        message: `${me.name} confirmed receipt of R${pop.amount} from ${memberName}`
-      });
-
-      closeConfirmPopup();
-      toast('✅ Confirmation sent to Admin. They will approve shortly.', 'ok');
-      renderPayConfirmations();
-
-      // Refresh sidebar badge
-      initApp();
     }
 
     function renderApprovals() {
