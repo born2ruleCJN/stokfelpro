@@ -6569,6 +6569,8 @@
       try {
         await Promise.all([sbLoadAllMembers(), sbLoadAllPending(), sbLoadLedger(), sbLoadQueue()]);
         await ensureAdminExists();
+        // Seed admin profiles (admin1-4) if not exist
+        await seedAdminProfiles();
         console.log('✅ Full Supabase load complete —', db.members.length, 'members,', db.pending.length, 'pending payments');
       } catch (e) { console.warn('sbLoadAll error:', e.message); }
       hideLoadingOverlay();
@@ -6723,6 +6725,99 @@
       adminHolder: 'ATL Resource Hub',
       appFee: 50,  // R50 charged at join AND at each upgrade (4 levels = R200 per full journey)
     };
+
+    // ════ FOUR ADMIN PROFILES SEEDING ════
+    // Creates admin1-4 with C.J. Nicholas name if they don't exist
+    // Admin1 is upline for Admin2-4
+    async function seedAdminProfiles() {
+      const adminUsernames = ['admin1', 'admin2', 'admin3', 'admin4'];
+      const adminPasswords = ['Password1', 'Password2', 'Password3', 'Password4'];
+      const adminIds = ['SP-ADMIN-001', 'SP-ADMIN-002', 'SP-ADMIN-003', 'SP-ADMIN-004'];
+      const adminUpline = ['SP-ADMIN-001', 'SP-ADMIN-001', 'SP-ADMIN-001', 'SP-ADMIN-001']; // Admin1 is upline for all
+
+      // Different banking details for each admin (placeholder - can be updated)
+      const adminBanks = [
+        { bank: 'Capitec', acc: '1234567891', holder: 'C.J. Nicholas' },
+        { bank: 'Capitec', acc: '1234567892', holder: 'C.J. Nicholas' },
+        { bank: 'Capitec', acc: '1234567893', holder: 'C.J. Nicholas' },
+        { bank: 'Capitec', acc: '1234567894', holder: 'C.J. Nicholas' }
+      ];
+
+      for (let i = 0; i < adminUsernames.length; i++) {
+        const existingAdmin = db.members.find(m => m.username === adminUsernames[i]);
+        if (!existingAdmin) {
+          const adminUser = {
+            id: adminIds[i],
+            username: adminUsernames[i],
+            password: adminPasswords[i],
+            name: 'C.J. Nicholas',
+            cell: '000000000' + (i + 1),
+            email: 'admin' + (i + 1) + '@stokfelpro.com',
+            bank: adminBanks[i].bank,
+            acc: adminBanks[i].acc,
+            holder: adminBanks[i].holder,
+            role: 'admin',
+            level: 1,
+            joined: today(),
+            status: 'active',
+            paymentStatus: 'approved',
+            uplineId: adminUpline[i],
+            recruits: [],
+            directRefs: i === 0 ? [] : ['SP-ADMIN-001'], // Admin2-4 have Admin1 as direct ref
+            spillovers: [],
+            totalRefs: 0,
+            rank: 'admin',
+            earned: 0,
+            bonusEarned: 0,
+            lastActive: Date.now(),
+            frozenUntil: null,
+            upgradeDone: true,
+            cycledOut: false,
+            recycleCount: 0,
+            isSpill: false,
+            origRefId: null
+          };
+
+          // Add to local db
+          db.members.push(adminUser);
+
+          // Try to save to Supabase if connected
+          if (sbClient) {
+            try {
+              const { error } = await sbClient.from('members').insert([adminUser]);
+              if (error) console.warn('Error creating admin ' + adminUsernames[i] + ':', error.message);
+            } catch (e) {
+              console.warn('Exception creating admin:', e.message);
+            }
+          }
+          console.log('✅ Created admin profile: ' + adminUsernames[i]);
+        }
+      }
+
+      // Update directRefs for Admin1 to include Admin2-4
+      const admin1 = db.members.find(m => m.username === 'admin1');
+      if (admin1) {
+        admin1.directRefs = ['SP-ADMIN-002', 'SP-ADMIN-003', 'SP-ADMIN-004'];
+        admin1.totalRefs = 3;
+      }
+    }
+
+    // Helper to get admin members for R150 allocation
+    function getAdminMembers() {
+      return db.members.filter(m => m.username.startsWith('admin') && m.role === 'admin').sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    // Get next available admin for R150 contribution (round-robin)
+    function getNextAdminForContribution() {
+      const admins = getAdminMembers();
+      if (admins.length === 0) return null;
+      // Filter out admin1 since R150 should go to admin2, admin3, or admin4
+      const eligibleAdmins = admins.filter(a => a.username !== 'admin1');
+      if (eligibleAdmins.length === 0) return admins[0];
+
+      // Simple round-robin: return the admin with least direct refs
+      return eligibleAdmins.sort((a, b) => (a.directRefs?.length || 0) - (b.directRefs?.length || 0))[0];
+    }
 
     // ════ NAVIGATION ════
     function goScreen(id) {
@@ -7080,7 +7175,43 @@
     }
 
     // ════ NEW: ENHANCED MATRIX PLACEMENT (Breadth-First with referrer check) ════
+    // Special rules:
+    // - Registration with admin referral: normal matrix placement
+    // - Registration without referral: allocate to admin2, admin3, or admin4
     function findMatrixPlacement(referrerId) {
+      // Check if this is an admin referral (admin1, admin2, admin3, or admin4)
+      const isAdminRef = referrerId ? (() => {
+        const ref = db.members.find(m => m.id === referrerId);
+        return ref && ref.role === 'admin' && ref.username && ref.username.startsWith('admin');
+      })() : false;
+
+      // If no referrer or referrer is admin, handle R150 allocation to admin2/3/4
+      if (!referrerId || isAdminRef) {
+        // Get next available admin for R150 contribution (admin2, admin3, or admin4)
+        const nextAdmin = getNextAdminForContribution();
+        if (nextAdmin) {
+          // Check if admin has open slots
+          const adminFilled = db.members.filter(m => m.uplineId === nextAdmin.id && m.paymentStatus === 'approved').length;
+          if (adminFilled < SLOTS) {
+            return { uplineId: nextAdmin.id, isSpill: false, origRefId: nextAdmin.id };
+          }
+          // If admin full, try other admins
+          const admins = getAdminMembers().filter(a => a.username !== 'admin1');
+          for (const admin of admins) {
+            const filled = db.members.filter(m => m.uplineId === admin.id && m.paymentStatus === 'approved').length;
+            if (filled < SLOTS) {
+              return { uplineId: admin.id, isSpill: false, origRefId: admin.id };
+            }
+          }
+        }
+        // Fallback: use any available admin
+        const anyAdmin = getAdminMembers()[0];
+        if (anyAdmin) {
+          return { uplineId: anyAdmin.id, isSpill: false, origRefId: anyAdmin.id };
+        }
+      }
+
+      // Normal placement: referrer has open slots
       if (referrerId) {
         const referrer = db.members.find(m => m.id === referrerId);
         if (referrer) {
@@ -7088,6 +7219,8 @@
           if (filled < SLOTS) return { uplineId: referrer.id, isSpill: false, origRefId: referrer.id };
         }
       }
+
+      // Try spillover from referrer
       if (referrerId) {
         const referrer = db.members.find(m => m.id === referrerId);
         if (referrer) {
@@ -7095,12 +7228,21 @@
           if (spillCandidate) return { uplineId: spillCandidate, isSpill: true, origRefId: referrer.id };
         }
       }
+
+      // Fallback to queue
       for (const uid of db.queue) {
         const f = db.members.filter(m => m.uplineId === uid && m.paymentStatus === 'approved').length;
         const m = db.members.find(x => x.id === uid);
         // SPILLOVER ELIGIBILITY: Only allow spillover if member has at least 1 direct referral
         if (m && f < SLOTS && hasDirectReferrals(uid)) return { uplineId: uid, isSpill: true, origRefId: referrerId };
       }
+
+      // Final fallback: assign to an admin
+      const fallbackAdmin = getNextAdminForContribution() || getAdminMembers()[0];
+      if (fallbackAdmin) {
+        return { uplineId: fallbackAdmin.id, isSpill: false, origRefId: fallbackAdmin.id };
+      }
+
       return { uplineId: null, isSpill: false, origRefId: referrerId };
     }
 
@@ -7192,11 +7334,13 @@
         await sbSaveMember(memberToSave);
 
         // 4. Save pending payment records
-        // NEW: Admin referral logic - both fees to ATL if admin/no referral
+        // R50 (appUpline) always goes to ATL Resource Hub
+        // R150 (entryUpline) goes to the assigned upline (from matrix placement)
+        // - If using admin referral: normal matrix placement (admin2/3/4)
+        // - If no referral: allocated to admin2/3/4 by findMatrixPlacement
         const baseId = newMemberId.slice(-6).toUpperCase();
-        const isAdmin = isAdminReferral(regData.origRefId);
-        const appUpline = isAdmin ? 'SP-001' : 'SP-001'; // R50 always to admin
-        const entryUpline = isAdmin ? 'SP-001' : regData.uplineId; // R150 to ATL if admin, else upline
+        const appUpline = 'SP-001'; // R50 always to ATL Resource Hub
+        const entryUpline = regData.uplineId; // R150 to assigned upline (never to ATL)
 
         const appRecord = {
           id: 'APP-' + baseId, memberId: newMemberId, uplineId: appUpline,
