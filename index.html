@@ -6730,6 +6730,11 @@
     // Creates admin1-4 with C.J. Nicholas name if they don't exist
     // Admin1 is upline for Admin2-4
     async function seedAdminProfiles() {
+      // Ensure members are loaded first
+      if (!db.members || db.members.length === 0) {
+        await sbLoadAllMembers();
+      }
+
       const adminUsernames = ['admin1', 'admin2', 'admin3', 'admin4'];
       const adminPasswords = ['Password1', 'Password2', 'Password3', 'Password4'];
       const adminIds = ['SP-ADMIN-001', 'SP-ADMIN-002', 'SP-ADMIN-003', 'SP-ADMIN-004'];
@@ -7511,6 +7516,9 @@
       try {
         // ALWAYS check Supabase first
         if (sbClient) {
+          // First, ensure admin profiles exist before checking login
+          await seedAdminProfiles();
+
           // Query Supabase with case-insensitive username
           const { data: rows, error } = await sbClient
             .from('members')
