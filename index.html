@@ -5824,6 +5824,9 @@
           <!-- TOP UPGRADE BUTTON - Always visible at top -->
           <div id="top-upgrade-box" style="margin-bottom:1.2rem"></div>
 
+          <!-- LEVEL 4 POSITIONS PROMPT -->
+          <div id="l4-positions-prompt" style="display:none"></div>
+
           <div class="stats-grid">
             <div class="stat g">
               <div class="stat-lbl">Total Earned</div>
@@ -6563,6 +6566,28 @@
       return db.queue;
     }
 
+    // ════ SETTINGS SAVE/LOAD ════
+    async function sbSaveSettings() {
+      if (!sbClient) return;
+      try {
+        const { error } = await sbClient.from('meta').upsert({ key: 'settings', value: JSON.stringify(sysSettings) }, { onConflict: 'key' });
+        if (error) console.error('sbSaveSettings error:', error.message);
+        else console.log('✅ Settings saved');
+      } catch (e) { console.error('sbSaveSettings exception:', e.message); }
+    }
+
+    async function sbLoadSettings() {
+      if (!sbClient) return;
+      try {
+        const { data, error } = await sbClient.from('meta').select('value').eq('key', 'settings').limit(1);
+        if (error) { console.warn('sbLoadSettings error:', error.message); return; }
+        if (data && data[0]) {
+          const loaded = JSON.parse(data[0].value);
+          Object.assign(sysSettings, loaded);
+        }
+      } catch (e) { console.warn('sbLoadSettings exception:', e.message); }
+    }
+
     // ── FULL LOAD ──
     async function sbLoadAll() {
       showLoadingOverlay('Loading your data...');
@@ -6740,7 +6765,7 @@
       const adminIds = ['SP-ADMIN-001', 'SP-ADMIN-002', 'SP-ADMIN-003', 'SP-ADMIN-004'];
       const adminUpline = ['SP-ADMIN-001', 'SP-ADMIN-001', 'SP-ADMIN-001', 'SP-ADMIN-001']; // Admin1 is upline for all
 
-      // Different banking details for each admin (placeholder - can be updated)
+      // Different banking details for each admin
       const adminBanks = [
         { bank: 'Capitec', acc: '1234567891', holder: 'C.J. Nicholas' },
         { bank: 'Capitec', acc: '1234567892', holder: 'C.J. Nicholas' },
@@ -6749,7 +6774,28 @@
       ];
 
       for (let i = 0; i < adminUsernames.length; i++) {
-        const existingAdmin = db.members.find(m => m.username === adminUsernames[i]);
+        // Check if admin already exists in local db
+        let existingAdmin = db.members.find(m => m.username === adminUsernames[i]);
+
+        // If not in local db, check Supabase directly
+        if (!existingAdmin && sbClient) {
+          try {
+            const { data: rows } = await sbClient
+              .from('members')
+              .select('*')
+              .ilike('username', adminUsernames[i])
+              .limit(1);
+            if (rows && rows.length > 0) {
+              // Admin exists in Supabase - add to local db
+              existingAdmin = rows[0];
+              db.members.push(existingAdmin);
+              console.log('Loaded admin from Supabase: ' + adminUsernames[i]);
+            }
+          } catch (e) {
+            console.warn('Error checking for admin in Supabase:', e.message);
+          }
+        }
+
         if (!existingAdmin) {
           const adminUser = {
             id: adminIds[i],
@@ -6783,19 +6829,23 @@
             origRefId: null
           };
 
-          // Add to local db
+          // Add to local db FIRST
           db.members.push(adminUser);
 
-          // Try to save to Supabase if connected
+          // Try to save to Supabase using UPSERT
           if (sbClient) {
             try {
-              const { error } = await sbClient.from('members').insert([adminUser]);
-              if (error) console.warn('Error creating admin ' + adminUsernames[i] + ':', error.message);
+              const { error } = await sbClient.from('members').upsert([adminUser], { onConflict: 'id' });
+              if (error) {
+                console.warn('Error creating admin ' + adminUsernames[i] + ':', error.message);
+              } else {
+                console.log('Created admin in Supabase: ' + adminUsernames[i]);
+              }
             } catch (e) {
               console.warn('Exception creating admin:', e.message);
             }
           }
-          console.log('✅ Created admin profile: ' + adminUsernames[i]);
+          console.log('Created admin profile: ' + adminUsernames[i]);
         }
       }
 
@@ -7098,7 +7148,16 @@
 
         const nextNum = await sbGetNextId();
         const id = 'SP-' + String(nextNum).padStart(3, '0');
-        const refId = sessionStorage.getItem('sp_ref') || null;
+        let refId = sessionStorage.getItem('sp_ref') || null;
+
+        // LEVEL 4 RULE: If purchasing L4 positions, prevent using own referral
+        if (window.l4PurchaseMode && refId && me && refId === me.id) {
+          // Cannot use own referral - clear it and use bottom of matrix instead
+          refId = null;
+          sessionStorage.removeItem('sp_ref');
+          toast('Cannot use your own referral - positions will be placed at bottom of matrix', 'warn');
+        }
+
         const referrer = refId ? db.members.find(m => m.id === refId) : null;
         let uplineId = null, isSpill = false, origRefId = null;
 
@@ -7392,22 +7451,25 @@
         toast('You need to fill all 3 slots first!', 'warn');
         return;
       }
-      const lvl = me.level;
-      const nextLvl = lvl + 1;
-      const nextLvlPerson = findQualifiedUpline(me, nextLvl);
-      const peerFee = UPG_PEER[lvl];
+      toast('You need to fill all 3 slots first!', 'warn');
+      return;
+    }
+    const lvl = me.level;
+    const nextLvl = lvl + 1;
+    const nextLvlPerson = findQualifiedUpline(me, nextLvl);
+    const peerFee = UPG_PEER[lvl];
 
-      // Use custom modal
-      let modalEl = document.getElementById('modalContainer');
-      if (!modalEl) {
-        modalEl = document.createElement('div');
-        modalEl.id = 'modalContainer';
-        document.body.appendChild(modalEl);
-      }
+    // Use custom modal
+    let modalEl = document.getElementById('modalContainer');
+    if (!modalEl) {
+      modalEl = document.createElement('div');
+      modalEl.id = 'modalContainer';
+      document.body.appendChild(modalEl);
+    }
 
-      // Vibrant, community-focused confirmation message
-      modalEl.innerHTML = `<div class="modal-backdrop" onclick="closeModal()"></div><div class="modal-content" style="max-width:480px"><div class="modal-header" style="background:linear-gradient(135deg,rgba(201,168,76,.15),rgba(201,168,76,.05))"><h3 style="color:var(--gold)">🎉 Congratulations!</h3><button class="close" onclick="closeModal()">×</button></div><div class="modal-body" style="text-align:center"><p style="font-size:1.1rem;margin-bottom:1rem;color:var(--text)">You've completed Level ${lvl}! Our Stokfel family is growing because of you.</p><p style="color:var(--muted);margin-bottom:1.25rem">You are now ready to upgrade to <strong style="color:var(--gold)">Level ${nextLvl}</strong>!</p><div style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:10px;padding:1rem;margin-bottom:1.25rem;text-align:left"><div style="font-size:.8rem;color:var(--gold);margin-bottom:.5rem;font-weight:700">📋 PAYMENT DETAILS:</div><div style="font-size:.85rem;margin-bottom:.4rem">• <strong>R${APP_FEE}</strong> admin app fee → ATL Resource Hub</div><div style="font-size:.85rem;margin-bottom:.4rem">• <strong>R${peerFee}</strong> upgrade payment → ${nextLvlPerson ? nextLvlPerson.name : 'your upline'}</div><div style="font-size:.85rem;color:var(--muted)">• Total: <strong>R${UPG_TOT[lvl]}</strong> (from your earnings)</div></div><p style="color:var(--muted);font-size:.8rem">Once you've made the payments, upload your proof so we can activate your next level!</p><button class="btn btn-gold" style="width:100%;margin-top:.75rem" onclick="closeModal();openUpgradeScreen()">Continue to Payment →</button><button class="btn btn-outline" style="width:100%;margin-top:.5rem" onclick="closeModal()">Not Now</button></div></div>`;
-      modalEl.style.display = 'flex';
+    // Vibrant, community-focused confirmation message
+    modalEl.innerHTML = `<div class="modal-backdrop" onclick="closeModal()"></div><div class="modal-content" style="max-width:480px"><div class="modal-header" style="background:linear-gradient(135deg,rgba(201,168,76,.15),rgba(201,168,76,.05))"><h3 style="color:var(--gold)">🎉 Congratulations!</h3><button class="close" onclick="closeModal()">×</button></div><div class="modal-body" style="text-align:center"><p style="font-size:1.1rem;margin-bottom:1rem;color:var(--text)">You've completed Level ${lvl}! Our Stokfel family is growing because of you.</p><p style="color:var(--muted);margin-bottom:1.25rem">You are now ready to upgrade to <strong style="color:var(--gold)">Level ${nextLvl}</strong>!</p><div style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:10px;padding:1rem;margin-bottom:1.25rem;text-align:left"><div style="font-size:.8rem;color:var(--gold);margin-bottom:.5rem;font-weight:700">📋 PAYMENT DETAILS:</div><div style="font-size:.85rem;margin-bottom:.4rem">• <strong>R${APP_FEE}</strong> admin app fee → ATL Resource Hub</div><div style="font-size:.85rem;margin-bottom:.4rem">• <strong>R${peerFee}</strong> upgrade payment → ${nextLvlPerson ? nextLvlPerson.name : 'your upline'}</div><div style="font-size:.85rem;color:var(--muted)">• Total: <strong>R${UPG_TOT[lvl]}</strong> (from your earnings)</div></div><p style="color:var(--muted);font-size:.8rem">Once you've made the payments, upload your proof so we can activate your next level!</p><button class="btn btn-gold" style="width:100%;margin-top:.75rem" onclick="closeModal();openUpgradeScreen()">Continue to Payment →</button><button class="btn btn-outline" style="width:100%;margin-top:.5rem" onclick="closeModal()">Not Now</button></div></div>`;
+    modalEl.style.display = 'flex';
     }
 
     function openUpgradeScreen() {
@@ -7536,6 +7598,10 @@
               hideLoadingOverlay();
               me = member;
               await sbLoadAll();  // Load all data from Supabase
+
+              // Clear L4 purchase mode flag after successful login
+              window.l4PurchaseMode = false;
+
               initApp();
               return;
             } else {
@@ -7556,6 +7622,9 @@
           if (demo) {
             me = demo;
             hideLoadingOverlay();
+
+            // Clear L4 purchase mode flag after successful login
+            window.l4PurchaseMode = false;
             initApp();
             return;
           }
@@ -7627,6 +7696,7 @@
     // Returns true if member can upgrade: 3+ recruits, payments confirmed, enough earnings
     function canUpgrade(member) {
       if (!member || member.level >= MAX_LEVEL) return false;
+      // LEVEL 4 is max - no upgrade beyond level 4
       if (member.upgPending || member.upgradeDone) return false;
       const recs = approvedRecruits(member.id);
       if (recs.length < SLOTS) return false;
@@ -7634,6 +7704,165 @@
       const cost = UPG_TOT[member.level] || 0;
       return earned >= cost;
     }
+
+    // Check if member CAN purchase Level 4 positions (voluntary)
+    function canPurchaseL4Positions(member) {
+      return member && member.level >= MAX_LEVEL;
+    }
+
+    // Check if member has purchased Level 4 positions
+    function hasL4Positions(member) {
+      return member && (member.l4PositionsPurchased || 0) > 0;
+    }
+
+    // ════ LEVEL 4 VOLUNTARY POSITIONS PURCHASE ════
+    // Allow Level 4 members to purchase 5 additional positions voluntarily
+    // While completing the full 81 members on Level 4
+    window.purchaseL4Positions = function () {
+      if (!me || me.level < MAX_LEVEL) {
+        alert('This option is only available for Level 4 members.');
+        return;
+      }
+
+      // Show modal with purchase options
+      const modal = document.getElementById('modalContainer');
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div style="background:var(--bg);border-radius:20px;padding:2rem;max-width:500px;width:90%;max-height:90vh;overflow-y:auto">
+          <h2 style="color:var(--gold);margin-bottom:1rem;text-align:center">🌟 Expand Your Level 4 Matrix</h2>
+          <div style="text-align:center;margin-bottom:1.5rem">
+            <p style="color:var(--text);font-size:.95rem">
+              As a <strong>Level 4 member</strong>, you can purchase 5 additional positions to expand your wealth circle!
+            </p>
+            <div style="background:rgba(251,191,36,.1);border:2px solid var(--gold);border-radius:12px;padding:1rem;margin:1rem 0">
+              <div style="font-size:1.1rem;color:var(--gold);font-weight:700;margin-bottom:.5rem">💰 Investment Details</div>
+              <div style="color:var(--text);font-size:.9rem">
+                Registration Fee: <strong>R50</strong> per position<br>
+                5 Positions × R200: <strong>R1,000</strong><br>
+                <hr style="border-color:var(--muted);margin:.5rem 0">
+                <strong style="font-size:1.1rem">Total: R1,000</strong>
+              </div>
+            </div>
+            <p style="color:var(--muted);font-size:.85rem">
+              Your 5 new positions will be placed at the <strong>bottom of the matrix</strong> according to system rules, OR you can use any <strong>other member's referral link</strong> (not your own).
+            </p>
+          </div>
+          
+          <div style="display:flex;flex-direction:column;gap:1rem">
+            <button class="btn btn-gold" onclick="purchaseL4WithReferral()">
+              🎯 Use Another Member's Referral Link
+            </button>
+            <button class="btn btn-primary" onclick="purchaseL4NoReferral()">
+              📊 Place at Bottom of Matrix
+            </button>
+            <button class="btn" style="background:var(--muted)" onclick="closeModal()">Cancel</button>
+          </div>
+        </div>
+      `;
+    };
+
+    // Purchase Level 4 positions WITH another member's referral link (not their own)
+    window.purchaseL4WithReferral = function () {
+      closeModal();
+      // Set flag to indicate this is for Level 4 positions
+      // This will be checked in registration to prevent using own referral
+      window.l4PurchaseMode = true;
+      // Navigate to registration
+      window.location.hash = 'register-l4';
+      showRegisterModal();
+    };
+
+    // Purchase Level 4 positions WITHOUT referral - places at bottom of matrix
+    window.purchaseL4NoReferral = function () {
+      if (!me || me.level < MAX_LEVEL) return;
+
+      // Find the first available slot at the bottom of the matrix (BFS)
+      // Start from admin1 and find any open slot
+      const admins = getAdminMembers();
+      let targetUpline = null;
+
+      // First try to find an admin with open slots
+      for (const admin of admins) {
+        const filled = db.members.filter(m => m.uplineId === admin.id && m.paymentStatus === 'approved').length;
+        if (filled < SLOTS) {
+          targetUpline = admin.id;
+          break;
+        }
+      }
+
+      // If all admins full, use BFS to find any open slot
+      if (!targetUpline && admins.length > 0) {
+        targetUpline = bfsOpen(admins[0].id);
+      }
+
+      if (!targetUpline) {
+        alert('No open slots available in the matrix. Please try again later.');
+        return;
+      }
+
+      // Show payment instructions for 5 positions
+      const modal = document.getElementById('modalContainer');
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div style="background:var(--bg);border-radius:20px;padding:2rem;max-width:500px;width:90%">
+          <h2 style="color:var(--gold);margin-bottom:1rem;text-align:center">💳 Payment Instructions</h2>
+          <div style="background:rgba(251,191,36,.1);border:2px solid var(--gold);border-radius:12px;padding:1.5rem;margin:1rem 0">
+            <p style="color:var(--text);font-size:.95rem;text-align:center;margin-bottom:1rem">
+              Please make payment of <strong style="color:var(--gold);font-size:1.2rem">R1,000</strong> for 5 positions:
+            </p>
+            <div style="color:var(--text);font-size:.9rem;line-height:1.8">
+              <strong>Account Name:</strong> STOKFEL PRO<br>
+              <strong>Bank:</strong> FNB<br>
+              <strong>Account Number:</strong> 6289 5710 285<br>
+              <strong>Reference:</strong> ${me.name.split(' ')[0].toUpperCase()}_L4
+            </div>
+          </div>
+          <p style="color:var(--muted);font-size:.8rem;text-align:center;margin:1rem 0">
+            After payment, your 5 positions will be placed at the <strong>bottom of the matrix</strong> according to system rules.
+          </p>
+          <button class="btn btn-gold" style="width:100%;padding:1rem;font-weight:700" onclick="confirmL4Payment()">
+            ✅ I've Made Payment - Register 5 Positions
+          </button>
+          <button class="btn" style="width:100%;margin-top:.5rem;background:var(--muted)" onclick="closeModal()">Cancel</button>
+        </div>
+      `;
+
+      // Store pending L4 purchase
+      window.pendingL4Purchase = { count: 5, referralId: targetUpline, isBottomOfMatrix: true };
+    };
+
+    // Confirm L4 payment and register positions
+    window.confirmL4Payment = async function () {
+      if (!window.pendingL4Purchase || !me) return;
+
+      const { count, referralId } = window.pendingL4Purchase;
+
+      try {
+        // Update member's l4PositionsPurchased
+        me.l4PositionsPurchased = (me.l4PositionsPurchased || 0) + count;
+
+        // Save to Supabase
+        if (sb) {
+          await sb.from('members').upsert({
+            id: me.id,
+            l4PositionsPurchased: me.l4PositionsPurchased
+          });
+        }
+
+        // Also save to localStorage
+        saveDB();
+
+        closeModal();
+        window.pendingL4Purchase = null;
+
+        alert(`🎉 Successfully registered ${count} positions! Your Level 4 positions are now active.`);
+        renderDash();
+
+      } catch (e) {
+        console.error('Error registering L4 positions:', e);
+        alert('Error registering positions. Please try again.');
+      }
+    };
 
     function closeModal() {
       const m = document.getElementById('modalContainer');
@@ -7653,6 +7882,34 @@
       set('s-level', u.level.toString());
       const lvlSub = u.level < MAX_LEVEL ? 'Level ' + u.level + ' in progress' : (u.level === MAX_LEVEL ? '🏆 Level 4 Complete!' : 'Recycled ♻️');
       set('s-level-sub', lvlSub);
+
+      // LEVEL 4 VOLUNTARY: Show prompt if member CAN purchase 5 positions (voluntary)
+      const l4Prompt = document.getElementById('l4-positions-prompt');
+      if (canPurchaseL4Positions(u) && !hasL4Positions(u)) {
+        const positionsPurchased = u.l4PositionsPurchased || 0;
+        if (l4Prompt) {
+          l4Prompt.innerHTML = `<div style="background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(251,191,36,.1));border:2px solid #22C55E;border-radius:16px;padding:1.5rem;text-align:center;margin-bottom:1rem">
+            <div style="font-size:1rem;color:#22C55E;font-weight:700">🌟 Expand Your Level 4 Matrix!</div>
+            <div style="font-size:.85rem;color:var(--text);margin-top:.6rem">You have reached <strong style="color:var(--gold)">Level 4</strong> - the highest level in StokfelPro!</div>
+            <div style="font-size:.85rem;color:var(--text);margin-top:.5rem">Purchase 5 additional positions to expand your wealth circle while completing the full 81 members on Level 4.</div>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:.5rem">Use any <strong>other member's referral link</strong> OR have positions placed at bottom of matrix.</div>
+            <div style="font-size:.9rem;color:var(--gold);margin-top:.7rem;font-weight:700">💰 Total Investment: R50 + (R200 × 5) = R1,000</div>
+            <button class="btn btn-gold" style="margin-top:1rem;font-weight:700" onclick="purchaseL4Positions()">Purchase 5 Positions</button>
+          </div>`;
+          l4Prompt.style.display = 'block';
+        }
+      } else if (hasL4Positions(u)) {
+        // Show success message if positions purchased
+        if (l4Prompt) {
+          l4Prompt.innerHTML = `<div style="background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(251,191,36,.1));border:2px solid #22C55E;border-radius:16px;padding:1.5rem;text-align:center;margin-bottom:1rem">
+            <div style="font-size:1rem;color:#22C55E;font-weight:700">✅ Level 4 Positions Active!</div>
+            <div style="font-size:.85rem;color:var(--text);margin-top:.6rem">You have purchased 5 additional positions to expand your wealth circle.</div>
+          </div>`;
+          l4Prompt.style.display = 'block';
+        }
+      } else {
+        if (l4Prompt) l4Prompt.style.display = 'none';
+      }
 
       // 4-level track highlight
       const allSteps = ['ls1', 'ls-upg1', 'ls2', 'ls-upg2', 'ls3', 'ls-upg3', 'ls4', 'ls-co'];
@@ -8627,6 +8884,10 @@
       if (!m) return;
       m.status = 'active';
       m.paymentStatus = 'approved';
+
+      // Save to Supabase
+      sbSaveMember(m);
+
       toast('✅ ' + m.name + ' force-activated', 'ok');
       closeProfileModal();
       if (document.getElementById('pg-admin').classList.contains('active')) renderAdmin();
@@ -8636,6 +8897,10 @@
       const m = db.members.find(x => x.id === uid);
       if (!m) return;
       m.frozenUntil = null;
+
+      // Save to Supabase
+      sbSaveMember(m);
+
       toast('🔓 ' + m.name + ' unfrozen', 'ok');
       closeProfileModal();
     }
@@ -8869,10 +9134,23 @@
       if (pop.type === 'upgrade') {
         const toLevel = pop.toLevel || (mem ? mem.level + 1 : 2);
         const fromLevel = pop.fromLevel || (mem ? mem.level : 1);
-        if (mem) { mem.level = toLevel; mem.upgradeDone = true; mem.upgPending = false; mem.status = 'active'; }
+        if (mem) {
+          mem.level = toLevel;
+          mem.upgradeDone = true;
+          mem.upgPending = false;
+          mem.status = 'active';
+
+          // LEVEL 4 RULE: Trigger requirement to purchase 5 positions
+          if (toLevel === 4) {
+            // Level 4 is MAX - no positions required (voluntary option now)
+          }
+        }
         const ledgerEntry = { id: 'L-' + Date.now(), type: 'upgrade', from: pop.memberName, to: ul ? ul.name : 'Admin', amt: pop.amount, date: today(), note: 'L' + fromLevel + '→L' + toLevel + ' upgrade fee' };
         await sbAddLedger(ledgerEntry);
         toast('✅ ' + pop.memberName + ' is now Level ' + toLevel + '!', 'ok');
+        if (toLevel === 4) {
+          toast('🎉 Congratulations! You must now purchase 5 new positions to continue.', 'warn');
+        }
         if (ul) { ul.earned = (ul.earned || 0) + pop.amount; await sbSaveMember(ul); }
         if (mem) await sbSaveMember(mem);
 
@@ -9750,15 +10028,15 @@ Join here: ${refLink}</div>
   <!-- ADMIN CONTACT & BANKING -->
   <div class="set-group"><h4>📞 Admin Contact & Banking</h4>
     <div class="set-row"><div><div class="sr-lbl">Admin Phone</div><div class="sr-desc">Displayed to all members</div></div>
-      <input class="set-input" id="s-phone" value="${sysSettings.adminPhone}" onchange="sysSettings.adminPhone=this.value;ATL.phone=this.value"></div>
+      <input class="set-input" id="s-phone" value="${sysSettings.adminPhone}" onchange="sysSettings.adminPhone=this.value;ATL.phone=this.value;sbSaveSettings()"></div>
     <div class="set-row"><div><div class="sr-lbl">App Registration Fee</div><div class="sr-desc">Charged to every new member at signup</div></div>
-      <input class="set-input" id="s-appfee" type="number" value="${sysSettings.appFee}" style="max-width:80px" onchange="sysSettings.appFee=+this.value"></div>
+      <input class="set-input" id="s-appfee" type="number" value="${sysSettings.appFee}" style="max-width:80px" onchange="sysSettings.appFee=+this.value;sbSaveSettings()"></div>
     <div class="set-row"><div><div class="sr-lbl">Account Holder Name</div><div class="sr-desc">App fee account name</div></div>
-      <input class="set-input" id="s-holder" value="${sysSettings.adminHolder}" onchange="sysSettings.adminHolder=this.value"></div>
+      <input class="set-input" id="s-holder" value="${sysSettings.adminHolder}" onchange="sysSettings.adminHolder=this.value;sbSaveSettings()"></div>
     <div class="set-row"><div><div class="sr-lbl">Bank Name</div></div>
-      <input class="set-input" id="s-bank" value="${sysSettings.adminBank}" onchange="sysSettings.adminBank=this.value"></div>
+      <input class="set-input" id="s-bank" value="${sysSettings.adminBank}" onchange="sysSettings.adminBank=this.value;sbSaveSettings()"></div>
     <div class="set-row"><div><div class="sr-lbl">Account Number</div></div>
-      <input class="set-input" id="s-acc" value="${sysSettings.adminAcc}" onchange="sysSettings.adminAcc=this.value;ATL.acc=this.value"></div>
+      <input class="set-input" id="s-acc" value="${sysSettings.adminAcc}" onchange="sysSettings.adminAcc=this.value;ATL.acc=this.value;sbSaveSettings()"></div>
   </div>
 
   <!-- EDIT MEMBER BANKING -->
@@ -9834,6 +10112,10 @@ Join here: ${refLink}</div>
       m.acc = document.getElementById('edit-acc').value.trim() || m.acc;
       m.cell = document.getElementById('edit-cell').value.trim() || m.cell;
       m.email = document.getElementById('edit-email').value.trim() || m.email;
+
+      // Save to Supabase
+      sbSaveMember(m);
+
       toast('✅ ' + m.name + '\'s banking details updated!');
     }
 
